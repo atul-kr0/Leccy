@@ -1,0 +1,7 @@
+package com.ev.EvChargingStation.exception;
+
+public class EmailAlreadyExistsException extends RuntimeException {
+    public EmailAlreadyExistsException(String message) {
+        super(message);
+    }
+}
