@@ -1,0 +1,45 @@
+# =========================
+# React / Vite
+# =========================
+leccy-frontend/node_modules/
+leccy-frontend/dist/
+leccy-frontend/.vite/
+
+# Frontend environment files
+leccy-frontend/.env
+leccy-frontend/.env.*
+!leccy-frontend/.env.example
+
+# =========================
+# Spring Boot / Maven
+# =========================
+leccy-backend/target/
+
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# IDE
+# =========================
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Logs
+# =========================
+*.log
