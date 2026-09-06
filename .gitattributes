@@ -1,0 +1,3 @@
+# Maven wrapper
+/leccy-backend/mvnw text eol=lf
+/leccy-backend/*.cmd text eol=crlf

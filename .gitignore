@@ -15,8 +15,11 @@ leccy-frontend/.env.*
 # =========================
 leccy-backend/target/
 
+# Local Spring Boot secrets
+leccy-backend/src/main/resources/application.properties
+
 # =========================
-# Environment / Secrets
+# Root environment / secrets
 # =========================
 .env
 .env.*
@@ -43,6 +46,8 @@ desktop.ini
 # Logs
 # =========================
 *.log
-.vercel
-.env*
+
+# =========================
+# Vercel
+# =========================
 .vercel/
