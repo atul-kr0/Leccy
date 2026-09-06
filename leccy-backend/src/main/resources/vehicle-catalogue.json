@@ -814,7 +814,7 @@
       "batteryCapacityKwh": 61.0,
       "connectorType": "CCS2",
       "maxAcChargingKw": 7.2,
-      "maxDcChargingKw": null,
+      "maxDcChargingKw": 67.0,
       "imagePath": "/vehicles/toyota/urban-cruiser-ebella.webp"
     },
     {
