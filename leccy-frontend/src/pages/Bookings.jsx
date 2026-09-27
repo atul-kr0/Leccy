@@ -5,6 +5,7 @@ import React, {
     useRef,
     useState,
 } from "react";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 
 const API_URL = `${import.meta.env.VITE_API_URL}/api/bookings`;
 const STOP_CHARGING_URL =
@@ -330,32 +331,72 @@ const Bookings = () => {
     useEffect(() => {
         fetchBookings(true);
 
-        /*
-         * Background polling keeps booking status current without
-         * forcing a full browser reload.
-         */
-        const interval = window.setInterval(() => {
-            fetchBookings(false);
-        }, 3000);
+        const controller = new AbortController();
+        let disposed = false;
 
-        /* Refresh immediately when the user returns to the tab. */
+        const connectToBookingEvents = async () => {
+            const token = getToken();
+            if (!token) return;
+
+            try {
+                await fetchEventSource(`${API_URL}/events`, {
+                    method: "GET",
+                    signal: controller.signal,
+                    headers: {
+                        Accept: "text/event-stream",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    openWhenHidden: true,
+                    async onopen(response) {
+                        const contentType =
+                            response.headers.get("content-type") || "";
+                        if (!response.ok) {
+                            throw new Error(`Booking SSE failed (${response.status})`);
+                        }
+                        if (!contentType.includes("text/event-stream")) {
+                            throw new Error(
+                                `Expected text/event-stream, received ${
+                                    contentType || "unknown content type"
+                                }`
+                            );
+                        }
+                    },
+                    onmessage(message) {
+                        if (!disposed && message.event === "booking-updated") {
+                            void fetchBookings(false);
+                        }
+                    },
+                    onclose() {
+                        if (!disposed) {
+                            throw new Error("Booking SSE connection closed unexpectedly.");
+                        }
+                    },
+                    onerror(error) {
+                        if (disposed || controller.signal.aborted) return;
+                        console.error("Bookings SSE error:", error);
+                    },
+                });
+            } catch (error) {
+                if (!disposed && !controller.signal.aborted) {
+                    console.error("Could not connect to booking SSE:", error);
+                }
+            }
+        };
+
+        void connectToBookingEvents();
+
         const handleVisibilityChange = () => {
             if (document.visibilityState === "visible") {
                 fetchBookings(false);
             }
         };
 
-        document.addEventListener(
-            "visibilitychange",
-            handleVisibilityChange
-        );
+        document.addEventListener("visibilitychange", handleVisibilityChange);
 
         return () => {
-            window.clearInterval(interval);
-            document.removeEventListener(
-                "visibilitychange",
-                handleVisibilityChange
-            );
+            disposed = true;
+            controller.abort();
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
     }, [fetchBookings]);
 

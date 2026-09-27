@@ -1,9 +1,9 @@
-
 import { useState } from "react";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL || "http://localhost:8080"
+).replace(/\/+$/, "");
 
-// Replace this with the actual @PostMapping from your controller.
 const CHECK_IN_ENDPOINT = `${API_BASE_URL}/api/check-in`;
 
 export default function CheckIn() {
@@ -21,9 +21,10 @@ export default function CheckIn() {
 
     const cleanToken = token.trim();
 
-    if (!cleanToken) {
+    // Validate the token before making the API request.
+    if (!/^\d{10}$/.test(cleanToken)) {
       setStatus("error");
-      setMessage("Please enter your booking token.");
+      setMessage("Please enter a valid 10-digit booking token.");
       return;
     }
 
@@ -35,49 +36,41 @@ export default function CheckIn() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
+          Accept: "text/plain",
         },
-        // Booking token, NOT a user authentication token.
-        body: JSON.stringify({ token: cleanToken }),
+        body: JSON.stringify({
+          token: cleanToken,
+        }),
       });
 
+      // The backend produces text/plain, not JSON.
       const responseText = await response.text();
 
-      let data = null;
-
-      if (responseText) {
-        try {
-          data = JSON.parse(responseText);
-        } catch {
-          data = null;
-        }
-      }
-
       if (!response.ok) {
-        const backendMessage =
-          data?.message ||
-          data?.error ||
+        throw new Error(
           responseText ||
-          `Request failed (${response.status}).`;
-
-        throw new Error(backendMessage);
+            `Request failed with status ${response.status}.`
+        );
       }
 
-      // Your CheckInService returns void.
-      // An HTTP 2xx response with an empty body is successful.
+      // A successful response should display the backend's message.
       setStatus("success");
       setMessage(
-        data?.message ||
-          "Your token has been verified. Your charging session has started."
+        responseText.trim() ||
+          "Your charging session has started successfully."
       );
     } catch (error) {
       setStatus("error");
 
-      setMessage(
-        error instanceof TypeError
-          ? "Unable to connect to the server. Please try again."
-          : error.message || "Something went wrong. Please try again."
-      );
+      if (error instanceof TypeError) {
+        setMessage(
+          "Unable to connect to the server. Check that your backend is running and try again."
+        );
+      } else {
+        setMessage(
+          error.message || "Something went wrong. Please try again."
+        );
+      }
     }
   }
 
@@ -85,6 +78,21 @@ export default function CheckIn() {
     setToken("");
     setMessage("");
     setStatus("idle");
+    setShowToken(false);
+  }
+
+  function handleTokenChange(event) {
+    // Keep only digits and limit the token to 10 characters.
+    const cleanValue = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 10);
+
+    setToken(cleanValue);
+
+    if (status !== "idle") {
+      setStatus("idle");
+      setMessage("");
+    }
   }
 
   return (
@@ -226,7 +234,9 @@ export default function CheckIn() {
           font-size: 20px;
           font-weight: 700;
           letter-spacing: 3px;
-          transition: border-color 180ms, box-shadow 180ms,
+          transition:
+            border-color 180ms,
+            box-shadow 180ms,
             background 180ms;
         }
 
@@ -262,6 +272,10 @@ export default function CheckIn() {
           cursor: pointer;
         }
 
+        .checkin-toggle:disabled {
+          cursor: not-allowed;
+        }
+
         .checkin-hint {
           margin: 10px 0 23px;
           color: #8998a6;
@@ -284,7 +298,9 @@ export default function CheckIn() {
           font-weight: 700;
           cursor: pointer;
           box-shadow: 0 8px 18px #00a44324;
-          transition: transform 180ms, background 180ms,
+          transition:
+            transform 180ms,
+            background 180ms,
             box-shadow 180ms;
         }
 
@@ -383,7 +399,9 @@ export default function CheckIn() {
         }
 
         @keyframes checkin-spin {
-          to { transform: rotate(360deg); }
+          to {
+            transform: rotate(360deg);
+          }
         }
 
         @media (max-width: 480px) {
@@ -475,6 +493,7 @@ export default function CheckIn() {
                     color: "#65798b",
                     fontSize: 13,
                     lineHeight: 1.8,
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {message}
@@ -485,14 +504,14 @@ export default function CheckIn() {
                   onClick={resetForm}
                   type="button"
                 >
-                  Verify another token →
+                  Verify another token <span>→</span>
                 </button>
               </div>
             ) : (
               <>
                 <p className="checkin-instruction">
-                  Your token will be checked against your booking status
-                  and assigned charger's availability.
+                  Your token will be checked against your booking
+                  status and assigned charger's availability.
                 </p>
 
                 <form onSubmit={handleSubmit}>
@@ -512,28 +531,24 @@ export default function CheckIn() {
                       autoComplete="off"
                       placeholder="Enter your token"
                       value={token}
-                      onChange={(event) => {
-                        setToken(
-                          event.target.value.replace(/\D/g, "").slice(0, 10)
-                        );
-
-                        if (status !== "idle") {
-                          setStatus("idle");
-                          setMessage("");
-                        }
-                      }}
+                      onChange={handleTokenChange}
                       disabled={isLoading}
                       maxLength={10}
                       required
                       aria-describedby="token-hint"
+                      aria-invalid={isError}
                     />
 
                     <button
                       className="checkin-toggle"
                       type="button"
-                      onClick={() => setShowToken((previous) => !previous)}
+                      onClick={() =>
+                        setShowToken((previous) => !previous)
+                      }
                       disabled={isLoading}
-                      aria-label={showToken ? "Hide token" : "Show token"}
+                      aria-label={
+                        showToken ? "Hide token" : "Show token"
+                      }
                     >
                       {showToken ? "Hide" : "Show"}
                     </button>
@@ -550,12 +565,15 @@ export default function CheckIn() {
                   >
                     {isLoading ? (
                       <>
-                        <span className="checkin-spinner" />
+                        <span
+                          className="checkin-spinner"
+                          aria-hidden="true"
+                        />
                         Verifying token...
                       </>
                     ) : (
                       <>
-                        Verify & Start Charging <span>→</span>
+                        Verify &amp; Start Charging <span>→</span>
                       </>
                     )}
                   </button>
@@ -568,6 +586,7 @@ export default function CheckIn() {
                     aria-live="assertive"
                   >
                     <span className="checkin-message-icon">!</span>
+
                     <div>
                       <strong>Unable to start charging</strong>
                       <div>{message}</div>

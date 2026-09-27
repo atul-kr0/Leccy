@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useNavigate } from "react-router-dom";
 
 import logo from "../assets/logo/logo-bright.svg";
@@ -8,6 +9,8 @@ import profileIcon from "../assets/icons/Profile.svg";
 
 const BOOKINGS_URL =
     `${import.meta.env.VITE_API_URL}/api/bookings`;
+
+const BOOKING_EVENTS_URL = `${BOOKINGS_URL}/events`;
 
 const NOTIFICATIONS_STORAGE_KEY =
     "leccy_notifications";
@@ -871,102 +874,114 @@ const Topbar = ({ setIsOpen }) => {
 
 
     // =====================================================
-    // INITIAL LOAD + LIVE POLLING
-    // =====================================================
+    // INITIAL LOAD + SSE BOOKING UPDATES
 
     useEffect(() => {
+        let disposed = false;
+        const controller = new AbortController();
 
         updateUnreadCount();
 
-        /*
-         * Sync immediately.
-         */
+        // Serialize notification syncs if multiple SSE events arrive quickly.
+        let syncInProgress = false;
+        let syncQueued = false;
 
-        syncBookingNotifications();
+        const runBookingSync = async () => {
+            if (syncInProgress) {
+                syncQueued = true;
+                return;
+            }
 
+            syncInProgress = true;
+            try {
+                do {
+                    syncQueued = false;
+                    await syncBookingNotifications();
+                } while (syncQueued && !disposed);
+            } finally {
+                syncInProgress = false;
+            }
+        };
 
-        /*
-         * Then check every 5 seconds.
-         */
+        void runBookingSync();
 
-        const interval =
-            window.setInterval(
-                () => {
+        const connectToBookingEvents = async () => {
+            const token = getToken();
+            if (!token) return;
 
-                    syncBookingNotifications();
-
-                },
-                5000
-            );
-
-
-        /*
-         * Same-tab notification updates.
-         */
-
-        const handleNotificationUpdate =
-            () => {
-
-                updateUnreadCount();
-
-            };
-
-
-        /*
-         * Other-tab localStorage updates.
-         */
-
-        const handleStorageChange =
-            (event) => {
-
-                if (
-                    event.key ===
-                    getNotificationsKey()
-                ) {
-
-                    updateUnreadCount();
-
+            try {
+                await fetchEventSource(BOOKING_EVENTS_URL, {
+                    method: "GET",
+                    signal: controller.signal,
+                    headers: {
+                        Accept: "text/event-stream",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    openWhenHidden: true,
+                    async onopen(response) {
+                        const contentType =
+                            response.headers.get("content-type") || "";
+                        if (!response.ok) {
+                            throw new Error(`Booking SSE failed (${response.status})`);
+                        }
+                        if (!contentType.includes("text/event-stream")) {
+                            throw new Error(
+                                `Expected text/event-stream, received ${
+                                    contentType || "unknown content type"
+                                }`
+                            );
+                        }
+                    },
+                    onmessage(message) {
+                        if (!disposed && message.event === "booking-updated") {
+                            void runBookingSync();
+                        }
+                    },
+                    onclose() {
+                        if (!disposed) {
+                            throw new Error("Booking SSE connection closed unexpectedly.");
+                        }
+                    },
+                    onerror(error) {
+                        if (disposed || controller.signal.aborted) return;
+                        console.error("Topbar booking SSE error:", error);
+                    },
+                });
+            } catch (error) {
+                if (!disposed && !controller.signal.aborted) {
+                    console.error("Topbar could not connect to booking SSE:", error);
                 }
+            }
+        };
 
-            };
+        void connectToBookingEvents();
 
+        const handleNotificationUpdate = () => updateUnreadCount();
+
+        const handleStorageChange = (event) => {
+            if (event.key === getNotificationsKey()) {
+                updateUnreadCount();
+            }
+        };
 
         window.addEventListener(
             "leccy-notifications-updated",
             handleNotificationUpdate
         );
-
-
-        window.addEventListener(
-            "storage",
-            handleStorageChange
-        );
-
+        window.addEventListener("storage", handleStorageChange);
 
         return () => {
-
-            window.clearInterval(
-                interval
-            );
-
-
+            disposed = true;
+            controller.abort();
             window.removeEventListener(
                 "leccy-notifications-updated",
                 handleNotificationUpdate
             );
-
-
-            window.removeEventListener(
-                "storage",
-                handleStorageChange
-            );
-
+            window.removeEventListener("storage", handleStorageChange);
         };
-
     }, []);
 
 
-    // =====================================================
     // OPEN NOTIFICATIONS
     // =====================================================
 

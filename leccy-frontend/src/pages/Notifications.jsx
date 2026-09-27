@@ -189,12 +189,9 @@ const Notifications = () => {
 
 
         /*
-         * Live synchronization.
-         *
-         * Same-tab updates are handled by the custom event.
-         * The storage event handles another tab/window.
-         * A short silent poll catches updates made by any
-         * other part of the application.
+         * Live synchronization:
+         * - custom event handles same-tab updates
+         * - storage event handles updates from another tab/window
          */
         const handleStorageUpdate = (event) => {
 
@@ -212,13 +209,6 @@ const Notifications = () => {
             handleStorageUpdate
         );
 
-        const interval =
-            window.setInterval(
-                loadNotifications,
-                1000
-            );
-
-
         return () => {
 
             window.removeEventListener(
@@ -229,11 +219,6 @@ const Notifications = () => {
             window.removeEventListener(
                 "storage",
                 handleStorageUpdate
-            );
-
-
-            window.clearInterval(
-                interval
             );
 
         };

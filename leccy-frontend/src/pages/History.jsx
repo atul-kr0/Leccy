@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 
 const API_URL = `${import.meta.env.VITE_API_URL}/api/bookings`;
 
@@ -632,50 +633,74 @@ const History = () => {
 
 
     useEffect(() => {
-        let cancelled = false;
+        let disposed = false;
+        const controller = new AbortController();
 
-        const loadInitialHistory = async () => {
-            if (!cancelled) {
-                await fetchBookings(true);
+        void fetchBookings(true);
+
+        const connectToBookingEvents = async () => {
+            const token = getToken();
+            if (!token) return;
+
+            try {
+                await fetchEventSource(`${API_URL}/events`, {
+                    method: "GET",
+                    signal: controller.signal,
+                    headers: {
+                        Accept: "text/event-stream",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    openWhenHidden: true,
+                    async onopen(response) {
+                        const contentType =
+                            response.headers.get("content-type") || "";
+                        if (!response.ok) {
+                            throw new Error(`Booking SSE failed (${response.status})`);
+                        }
+                        if (!contentType.includes("text/event-stream")) {
+                            throw new Error(
+                                `Expected text/event-stream, received ${
+                                    contentType || "unknown content type"
+                                }`
+                            );
+                        }
+                    },
+                    onmessage(message) {
+                        if (!disposed && message.event === "booking-updated") {
+                            void fetchBookings(false);
+                        }
+                    },
+                    onclose() {
+                        if (!disposed) {
+                            throw new Error("Booking SSE connection closed unexpectedly.");
+                        }
+                    },
+                    onerror(error) {
+                        if (disposed || controller.signal.aborted) return;
+                        console.error("History SSE error:", error);
+                    },
+                });
+            } catch (error) {
+                if (!disposed && !controller.signal.aborted) {
+                    console.error("Could not connect to booking SSE:", error);
+                }
             }
         };
 
-        loadInitialHistory();
+        void connectToBookingEvents();
 
-        /*
-         * Keep history synchronized automatically.
-         *
-         * The backend is polled in the background so the user does not
-         * need a Refresh button. Changes such as COMPLETED, CANCELLED,
-         * or EXPIRED bookings appear automatically on the next sync.
-         */
-        const syncInterval = window.setInterval(() => {
-            if (!cancelled) {
-                fetchBookings(false);
-            }
-        }, 2000);
-
-        /*
-         * Refresh immediately when the user returns to this tab.
-         */
         const handleVisibilityChange = () => {
-            if (!document.hidden && !cancelled) {
+            if (!document.hidden && !disposed) {
                 fetchBookings(false);
             }
         };
 
-        document.addEventListener(
-            "visibilitychange",
-            handleVisibilityChange
-        );
+        document.addEventListener("visibilitychange", handleVisibilityChange);
 
         return () => {
-            cancelled = true;
-            window.clearInterval(syncInterval);
-            document.removeEventListener(
-                "visibilitychange",
-                handleVisibilityChange
-            );
+            disposed = true;
+            controller.abort();
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
     }, [fetchBookings]);
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { Link } from "react-router-dom";
 import vehicleFallback from "../assets/images/VehicleCard.png";
 import { getBrandLogo, getVehicleImage } from "../utils/vehicleAssets";
@@ -401,27 +402,68 @@ const MyVehicles = () => {
 
     useEffect(() => {
         let mounted = true;
+        const controller = new AbortController();
 
         const load = async () => {
             await Promise.all([fetchVehicles(), fetchBookings(), fetchManufacturers()]);
             if (!mounted) return;
         };
 
-        load();
+        void load();
 
-        // Keep the UI in sync with backend changes without reloading the browser.
-        // React state updates the vehicle cards and overview stats in-place.
-        const vehicleSyncInterval = window.setInterval(
-            () => fetchVehicles(true),
-            5000
-        );
+        // Booking changes arrive through SSE rather than periodic API polling.
+        const connectToBookingEvents = async () => {
+            const token = getToken();
+            if (!token) return;
 
-        const bookingSyncInterval = window.setInterval(
-            () => fetchBookings(),
-            5000
-        );
+            try {
+                await fetchEventSource(`${BOOKINGS_API_URL}/events`, {
+                    method: "GET",
+                    signal: controller.signal,
+                    headers: {
+                        Accept: "text/event-stream",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    openWhenHidden: true,
+                    async onopen(response) {
+                        const contentType =
+                            response.headers.get("content-type") || "";
+                        if (!response.ok) {
+                            throw new Error(`Booking SSE failed (${response.status})`);
+                        }
+                        if (!contentType.includes("text/event-stream")) {
+                            throw new Error(
+                                `Expected text/event-stream, received ${
+                                    contentType || "unknown content type"
+                                }`
+                            );
+                        }
+                    },
+                    onmessage(message) {
+                        if (mounted && message.event === "booking-updated") {
+                            void fetchBookings();
+                        }
+                    },
+                    onclose() {
+                        if (mounted) {
+                            throw new Error("Booking SSE connection closed unexpectedly.");
+                        }
+                    },
+                    onerror(error) {
+                        if (!mounted || controller.signal.aborted) return;
+                        console.error("MyVehicles booking SSE error:", error);
+                    },
+                });
+            } catch (error) {
+                if (mounted && !controller.signal.aborted) {
+                    console.error("MyVehicles could not connect to booking SSE:", error);
+                }
+            }
+        };
 
-        // Refresh immediately when the user comes back to this tab.
+        void connectToBookingEvents();
+
+        // Refresh stale data when the user returns to this tab.
         const handleVisibilityChange = () => {
             if (document.visibilityState === "visible") {
                 fetchVehicles(true);
@@ -433,12 +475,8 @@ const MyVehicles = () => {
 
         return () => {
             mounted = false;
-            window.clearInterval(vehicleSyncInterval);
-            window.clearInterval(bookingSyncInterval);
-            document.removeEventListener(
-                "visibilitychange",
-                handleVisibilityChange
-            );
+            controller.abort();
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
     }, []);
 
