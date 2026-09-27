@@ -71,6 +71,7 @@ public class SecurityConfig {
                                 "/api/contact",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
+                                "/api/check-in",
                                 "/swagger-ui.html"
                         )
                         .permitAll()
@@ -115,7 +116,8 @@ public class SecurityConfig {
                 List.of(
                         "https://leccy.vercel.app",
                         "https://leccy-smart-ev-charging-station-fro.vercel.app",
-                        "http://localhost:*"
+                        "http://localhost:*",
+                        "https://xbmh39sw-5173.inc1.devtunnels.ms/"
                 )
         );
 

@@ -11,11 +11,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-
-import static com.ev.EvChargingStation.enums.BookingStatus.CHARGING;
-import static com.ev.EvChargingStation.enums.ChargerStatus.BUSY;
-
 @Service
 @RequiredArgsConstructor
 public class CheckInService {
@@ -24,10 +19,23 @@ public class CheckInService {
     private final ChargingSessionService chargingSessionService;
 
     @Transactional
-    public void checkIn(String token) {
+    public String checkIn(String token) {
 
-        Booking booking = bookingRepository.findByTokenNumber(token)
-                .orElseThrow(() -> new InvalidTokenException("Invalid token."));
+        if (token == null || token.isBlank()) {
+            throw new InvalidTokenException(
+                    "Please enter your booking token."
+            );
+        }
+
+        String cleanToken = token.trim();
+
+        Booking booking = bookingRepository
+                .findByTokenNumber(cleanToken)
+                .orElseThrow(() ->
+                        new InvalidTokenException(
+                                "Invalid token. Please check and try again."
+                        )
+                );
 
         switch (booking.getStatus()) {
 
@@ -36,41 +44,52 @@ public class CheckInService {
                             "It's not your turn yet. Please wait for your notification."
                     );
 
+            case NOTIFIED -> {
+                if (booking.getCharger() == null) {
+                    throw new ChargerUnavailableException(
+                            "No charger is assigned to this booking. Please contact support."
+                    );
+                }
+
+                if (booking.getCharger().getChargerStatus()
+                        != ChargerStatus.AVAILABLE) {
+
+                    throw new ChargerUnavailableException(
+                            "Your assigned charger is currently unavailable. Please contact support."
+                    );
+                }
+
+                // Starts the session and updates the booking/charger
+                // according to your existing ChargingSessionService.
+                chargingSessionService.startSession(booking);
+
+                return "Check-in successful! Your charging session has started.";
+            }
+
             case CANCELLED ->
                     throw new BookingStatusInvalidException(
-                            "This booking has been cancelled."
+                            "This booking has been cancelled. Please join the queue again."
                     );
 
             case EXPIRED ->
                     throw new BookingStatusInvalidException(
-                            "This booking has expired."
+                            "This booking has expired. Please join the queue again."
                     );
 
             case CHARGING ->
                     throw new BookingStatusInvalidException(
-                            "Charging session is already in progress."
+                            "Your charging session is already in progress."
                     );
 
             case COMPLETED ->
                     throw new BookingStatusInvalidException(
-                            "Charging session has already been completed."
+                            "This charging session has already been completed."
                     );
-
-            case NOTIFIED -> {
-
-                if (booking.getCharger().getChargerStatus() != ChargerStatus.AVAILABLE) {
-                    throw new ChargerUnavailableException(
-                            "Assigned charger is currently unavailable."
-                    );
-                }
-
-                booking.setCheckedInAt((LocalDateTime.now()));
-
-                chargingSessionService.startSession(booking);
-            }
         }
 
-//        booking.setStatus(BookingStatus.CHECKED_IN);
-
+        // Defensive fallback if another status is added in the future.
+        throw new BookingStatusInvalidException(
+                "This booking cannot be checked in."
+        );
     }
 }
