@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -32,7 +34,6 @@ public class OpenChargeMapImportServiceImpl
 
     private final RestClient restClient = RestClient.create();
 
-    // Request stations throughout India.
     private static final int MAX_RESULTS = 1_000_000;
 
     @Override
@@ -42,6 +43,7 @@ public class OpenChargeMapImportServiceImpl
         int skippedStations = 0;
         int importedChargers = 0;
 
+        // 1. Fetch stations from OpenChargeMap.
         String url = UriComponentsBuilder
                 .fromHttpUrl("https://api.openchargemap.io/v3/poi")
                 .queryParam("output", "json")
@@ -64,14 +66,28 @@ public class OpenChargeMapImportServiceImpl
 
         log.info("OpenChargeMap returned {} stations.", response.length);
 
+        // 2. Load all existing OCM IDs in one database query.
+        Set<Long> existingIds = new HashSet<>(
+                stationRepository.findAllOpenChargeMapIds()
+        );
+
+        log.info(
+                "Found {} existing OpenChargeMap station IDs.",
+                existingIds.size()
+        );
+
+        // 3. Process each station.
         for (OpenChargeMapResponse dto : response) {
 
             if (dto == null || dto.getId() == null) {
                 continue;
             }
 
-            // Avoid importing the same station again.
-            if (stationRepository.existsByOpenChargeMapId(dto.getId())) {
+            Long openChargeMapId = dto.getId();
+
+            // Skip IDs already in the database OR already processed
+            // during this import.
+            if (!existingIds.add(openChargeMapId)) {
                 skippedStations++;
                 continue;
             }
@@ -79,14 +95,17 @@ public class OpenChargeMapImportServiceImpl
             if (dto.getAddressInfo() == null) {
                 log.warn(
                         "Skipping station with missing address. OCM ID: {}",
-                        dto.getId()
+                        openChargeMapId
                 );
+
+                // It wasn't saved, so remove it from the in-memory set.
+                existingIds.remove(openChargeMapId);
                 continue;
             }
 
             ChargingStation station = new ChargingStation();
 
-            station.setOpenChargeMapId(dto.getId());
+            station.setOpenChargeMapId(openChargeMapId);
 
             station.setStationName(
                     dto.getAddressInfo().getTitle() == null
@@ -110,10 +129,11 @@ public class OpenChargeMapImportServiceImpl
             station.setRating(0.0);
             station.setStationStatus(StationStatus.ACTIVE);
 
-            // Save the station before creating its chargers.
-            stationRepository.save(station);
+            // 4. Save the new station.
+            station = stationRepository.save(station);
             importedStations++;
 
+            // 5. Import chargers only for this newly inserted station.
             List<ConnectionDTO> connections = dto.getConnections();
 
             if (connections == null || connections.isEmpty()) {
@@ -164,7 +184,7 @@ public class OpenChargeMapImportServiceImpl
 
         log.info("India-wide import completed.");
         log.info("Stations imported: {}", importedStations);
-        log.info("Stations skipped (already exist): {}", skippedStations);
+        log.info("Stations skipped: {}", skippedStations);
         log.info("Chargers imported: {}", importedChargers);
     }
 
